@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Прожарим — Колл-центр</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="appShell">
+    <aside class="leftBar">
+      <div class="logoBox">
+        <div class="logoMark">П</div>
+        <div>
+          <div class="logoTitle">Колл-центр</div>
+          <div class="logoSub">Сытная доставка</div>
+        </div>
+      </div>
+      <div class="authCard">
+        <label>Ключ подключения</label>
+        <input id="adminToken" type="password" placeholder="Введите пароль" />
+        <button class="primaryBtn" id="saveAuthBtn">Подключиться</button>
+      </div>
+      <div class="sideInfo">
+        Автообновление заказов включено. Адрес API скрыт в коде.
+      </div>
+    </aside>
+
+    <main class="content">
+      <section class="hero panel">
+        <div class="heroTop">
+          <div>
+            <div class="eyebrow">PROZHARIM · CALL CENTER</div>
+            <h1>Колл-центр</h1>
+            <p>Отдельная страница заказов с фильтрами, статусами и сводкой.</p>
+          </div>
+          <div class="heroActions">
+            <input id="searchInput" placeholder="Поиск по номеру, клиенту, телефону, адресу" />
+            <button class="ghostBtn" id="applyFiltersBtn">Фильтры</button>
+          </div>
+        </div>
+        <div class="heroBottom">
+          <div class="filterRow">
+            <select id="siteFilter">
+              <option value="">Все сайты</option>
+              <option value="prozharim">ПРОЖАРИМ</option>
+              <option value="sushidza">СУШИДЗА</option>
+              <option value="banzai">БАНЗАЙ</option>
+            </select>
+            <select id="dateMode">
+              <option value="all">За всё время</option>
+              <option value="date">За дату</option>
+            </select>
+            <input id="dateInput" type="date" disabled />
+            <button class="primaryBtn" id="refreshBtn">Обновить</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="statsGrid">
+        <div class="stat panel"><div class="statLabel">Новых заказов</div><div class="statValue" id="statNew">0</div></div>
+        <div class="stat panel"><div class="statLabel">Всего заказов</div><div class="statValue" id="statTotal">0</div></div>
+        <div class="stat panel"><div class="statLabel">Выручка</div><div class="statValue" id="statRevenue">0 ₽</div></div>
+      </section>
+
+      <section class="panel tapeSection">
+        <div class="sectionHead">
+          <div>
+            <h2>Лента заказов</h2>
+            <p>Все входящие заказы с сайтов ресторанов</p>
+          </div>
+          <div class="chips" id="statusChips">
+            <button class="chip isOn" data-status="">Все</button>
+            <button class="chip" data-status="new">Новый</button>
+            <button class="chip" data-status="confirmed">Подтверждён</button>
+            <button class="chip" data-status="cooking">Готовится</button>
+            <button class="chip" data-status="delivery">У курьера</button>
+            <button class="chip" data-status="done">Завершён</button>
+            <button class="chip" data-status="cancelled">Отменён</button>
+          </div>
+        </div>
+        <div class="ordersScroll">
+          <table class="ordersTable">
+            <thead>
+              <tr>
+                <th>Статус / №</th>
+                <th>Время</th>
+                <th>Клиент</th>
+                <th>Тип</th>
+                <th>Адрес</th>
+                <th>Точка</th>
+                <th>Сумма</th>
+              </tr>
+            </thead>
+            <tbody id="ordersBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel detailsSection">
+        <div class="sectionHead">
+          <div>
+            <h2>Детали заказа</h2>
+            <p>Выбери заказ в таблице, чтобы открыть карточку.</p>
+          </div>
+        </div>
+        <div id="orderDetails" class="orderDetails empty">Выбери заказ из таблицы.</div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="js/app.js"></script>
+</body>
+</html>
