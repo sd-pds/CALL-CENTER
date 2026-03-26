@@ -85,24 +85,24 @@ function verifyConnection(token){
   return fetch(`${API_BASE}/admin/ping`, { headers:{ 'X-Admin-Token': token }})
     .then(async res => {
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Ошибка API');
-      if (!data.hasKv) throw new Error('Worker не видит ORDERS_KV');
+      if (!res.ok) throw new Error(data.error || 'Код ошибки API1. Обратитесь к разработчику.');
+      if (!data.hasKv) throw new Error('Код ошибки WKV1. Обратитесь к разработчику.');
       return data;
     });
 }
 async function saveAuth(){
   const token = $('#adminToken').value.trim();
-  if (!token) return showToast('Введите ADMIN_TOKEN');
+  if (!token) return showToast('Введите пароль');
   setAuthBusy(true);
   setConnectionState('Проверка подключения...', 'pending');
   try {
     await verifyConnection(token);
     state.adminToken = token;
     localStorage.setItem('proz_admin_token', token);
-    setConnectionState('Подключено. KV и Worker доступны.', 'success');
+    setConnectionState('Подключение установлено.', 'success');
     await requestNotificationPermission();
     await bootstrap();
-    showToast('Подключение подтверждено');
+    showToast('Подключение установлено');
   } catch (err){
     setConnectionState(err.message || 'Ошибка подключения', 'error');
     showToast(err.message || 'Ошибка подключения');
@@ -111,7 +111,7 @@ async function saveAuth(){
   }
 }
 async function api(path, options={}){
-  if (!state.adminToken) throw new Error('Сначала введи ADMIN_TOKEN');
+  if (!state.adminToken) throw new Error('Сначала введи пароль');
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
@@ -121,7 +121,7 @@ async function api(path, options={}){
     }
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Ошибка API');
+  if (!res.ok) throw new Error(data.error || 'Код ошибки API1. Обратитесь к разработчику.');
   return data;
 }
 function applyClientFilters(items){
@@ -421,10 +421,10 @@ function syncFilters(){
 (function init(){
   bindEvents();
   if (state.adminToken) {
-    setConnectionState('Проверка сохранённого токена...', 'pending');
+    setConnectionState('Проверка сохранённого пароля...', 'pending');
     verifyConnection(state.adminToken)
       .then(async() => {
-        setConnectionState('Подключено. KV и Worker доступны.', 'success');
+        setConnectionState('Подключение установлено.', 'success');
         await requestNotificationPermission();
         return bootstrap();
       })
@@ -433,6 +433,6 @@ function syncFilters(){
         showToast(err.message || 'Ошибка подключения');
       });
   } else {
-    setConnectionState('Введите ADMIN_TOKEN для загрузки заказов', '');
+    setConnectionState('Введите пароль для загрузки заказов', '');
   }
 })();
