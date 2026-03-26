@@ -1,4 +1,3 @@
-
 const API_BASE = "https://prozharim-oreder-api.polihov-alexey-a.workers.dev";
 const REFRESH_MS = 10000;
 const STATUS_LABELS = {
@@ -19,420 +18,122 @@ const state = {
   search: '',
   site: '',
   dateMode: 'all',
-  dateValue: '',
-  lastNewIds: new Set(),
-  blinkTimer: null,
-  blinkOn: false,
-  originalTitle: document.title,
-  newOrderCount: 0,
+  dateValue: ''
 };
-
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
-const MAIN_FAVICON = 'assets/favicon.png';
-const ALERT_FAVICON = 'assets/favicon-alert.png';
 
-function showToast(message){
-  const el = $('#toast');
-  el.textContent = message;
-  el.classList.add('isOn');
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => el.classList.remove('isOn'), 2600);
-}
-function setConnectionState(text, mode=''){
-  const el = $('#connectState');
-  if(!el) return;
-  el.textContent = text;
-  el.className = `connectState ${mode}`.trim();
-}
-function setAuthBusy(isBusy){
-  const btn = $('#saveAuthBtn');
-  btn.disabled = isBusy;
-  btn.textContent = isBusy ? 'Проверка...' : 'Подключиться';
-}
-function escapeHtml(v){
-  return String(v ?? '').replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-function fmtNum(v){
-  const n = Number(v);
-  if (!Number.isFinite(n)) return '';
-  return n.toLocaleString('ru-RU');
-}
-function formatMoney(v){
-  const n = Number(v || 0);
-  return `${Math.round(n).toLocaleString('ru-RU')} ₽`;
-}
-function formatDateTime(iso){
-  const d = new Date(iso);
-  return d.toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-}
-function getOrderDateKey(order){
-  const d = new Date(order.createdAt);
-  const y = d.getFullYear();
-  const m = String(d.getMonth()+1).padStart(2,'0');
-  const day = String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
-function getVal(...values){
-  for (const v of values){
-    if (v === 0) return 0;
-    if (v === false) return false;
-    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
-  }
-  return '';
-}
-function verifyConnection(token){
-  return fetch(`${API_BASE}/admin/ping`, { headers:{ 'X-Admin-Token': token }})
-    .then(async res => {
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Ошибка API');
-      if (!data.hasKv) throw new Error('Worker не видит ORDERS_KV');
-      return data;
-    });
-}
-async function saveAuth(){
-  const token = $('#adminToken').value.trim();
-  if (!token) return showToast('Введите ADMIN_TOKEN');
-  setAuthBusy(true);
-  setConnectionState('Проверка подключения...', 'pending');
-  try {
-    await verifyConnection(token);
-    state.adminToken = token;
-    localStorage.setItem('proz_admin_token', token);
-    setConnectionState('Подключено. KV и Worker доступны.', 'success');
-    await requestNotificationPermission();
-    await bootstrap();
-    showToast('Подключение подтверждено');
-  } catch (err){
-    setConnectionState(err.message || 'Ошибка подключения', 'error');
-    showToast(err.message || 'Ошибка подключения');
-  } finally {
-    setAuthBusy(false);
-  }
-}
-async function api(path, options={}){
-  if (!state.adminToken) throw new Error('Сначала введи ADMIN_TOKEN');
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Admin-Token': state.adminToken,
-      ...(options.headers || {})
-    }
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Ошибка API');
-  return data;
-}
-function applyClientFilters(items){
-  return items.filter(order => {
-    if (state.statusFilter && order.status !== state.statusFilter) return false;
-    if (state.site && order.site !== state.site) return false;
-    if (state.dateMode === 'date' && state.dateValue && getOrderDateKey(order) !== state.dateValue) return false;
-    const q = state.search.trim().toLowerCase();
-    if (q) {
-      const hay = [
-        order.id,
-        order.customer?.name,
-        order.customer?.phone,
-        order.delivery?.address,
-        order.delivery?.restaurant,
-        order.point,
-        order.branch,
-        order.comment,
-        SITE_LABELS[order.site] || order.site
-      ].filter(Boolean).join(' ').toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-}
-async function bootstrap(){
-  await loadOrders();
-  startAutoRefresh();
-}
-function startAutoRefresh(){
-  clearInterval(state._timer);
-  if (!state.adminToken) return;
-  state._timer = setInterval(() => {
-    if (document.hidden) return;
-    loadOrders(true).catch(() => {});
-  }, REFRESH_MS);
-}
-async function loadOrders(silent=false){
-  const data = await api('/admin/orders?limit=500');
-  const prevIds = new Set(state.orders.map(x => x.id));
-  state.orders = data.items || [];
-  handleOrderAlerts(state.orders, prevIds, silent);
-  render();
-  if (!silent && prevIds.size) {
-    const fresh = state.orders.filter(x => !prevIds.has(x.id)).length;
-    if (fresh > 0) showToast(`Новых заказов: ${fresh}`);
-  }
-}
-function handleOrderAlerts(orders, prevIds, silent){
-  const newOrders = orders.filter(x => x.status === 'new');
-  const newIds = new Set(newOrders.map(x => x.id));
-  state.newOrderCount = newIds.size;
-  if (newIds.size > 0) startBlink(); else stopBlink();
-  let appeared = 0;
-  newIds.forEach(id => {
-    if (!state.lastNewIds.has(id) && (!prevIds || !prevIds.has(id))) appeared++;
-  });
-  if (!silent && appeared > 0) {
-    beep();
-    notifyBrowser(`Новый заказ${appeared > 1 ? `ов: ${appeared}` : ''}`, 'В колл-центр поступил новый заказ.');
-  }
-  state.lastNewIds = newIds;
-}
-function setFavicon(href){
-  const favicon = $('#favicon');
-  if (favicon) favicon.href = href;
-}
-function startBlink(){
-  if (state.blinkTimer) return;
-  state.blinkTimer = setInterval(() => {
-    state.blinkOn = !state.blinkOn;
-    const countText = state.newOrderCount > 1 ? ` (${state.newOrderCount})` : '';
-    document.title = state.blinkOn ? `🔴${countText} Новый заказ` : state.originalTitle;
-    setFavicon(state.blinkOn ? ALERT_FAVICON : MAIN_FAVICON);
-  }, 1000);
-}
-function stopBlink(){
-  if (state.blinkTimer) {
-    clearInterval(state.blinkTimer);
-    state.blinkTimer = null;
-  }
-  state.blinkOn = false;
-  document.title = state.originalTitle;
-  setFavicon(MAIN_FAVICON);
-}
-function beep(){
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 1046;
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.36);
-    setTimeout(() => ctx.close && ctx.close(), 500);
-  } catch {}
-}
-async function requestNotificationPermission(){
-  if (!('Notification' in window)) return;
-  if (Notification.permission === 'default') {
-    try { await Notification.requestPermission(); } catch {}
-  }
-}
-function notifyBrowser(title, body){
-  if (!('Notification' in window)) return;
-  if (Notification.permission !== 'granted') return;
-  try {
-    new Notification(title, { body, icon: MAIN_FAVICON, badge: ALERT_FAVICON, silent: false });
-  } catch {}
-}
-function render(){
-  const items = applyClientFilters(state.orders);
-  renderStats(items);
-  renderTable(items);
-  const selected = items.find(x => x.id === state.selectedOrderId) || state.orders.find(x => x.id === state.selectedOrderId) || null;
-  if (selected && $('#orderModal')?.classList.contains('isOn')) renderDetails(selected);
-}
-function renderStats(items){
-  const newCount = items.filter(x => x.status === 'new').length;
-  const revenue = items.filter(x => x.status === 'done').reduce((s, x) => s + Number(x.total || 0), 0);
-  $('#statNew').textContent = newCount.toLocaleString('ru-RU');
-  $('#statTotal').textContent = items.length.toLocaleString('ru-RU');
-  $('#statRevenue').textContent = formatMoney(revenue);
-}
-function statusBadge(status){
-  return `<span class="statusBadge status-${escapeHtml(status)}">${escapeHtml(STATUS_LABELS[status] || status)}</span>`;
-}
-function typeLabel(order){
-  const when = order.when?.type === 'later' ? 'Предзаказ' : 'Ближайшее';
-  const receive = order.delivery?.type === 'pickup' ? 'Самовывоз' : 'Доставка';
-  return `${when}<br>${receive}`;
-}
-function orderPointText(order){
-  const site = SITE_LABELS[order.site] || order.site || '';
-  const point = getVal(order.delivery?.restaurant, order.point, order.branch, order.pointName, order.restaurantPoint, order.pickupPoint, order.delivery?.point, order.delivery?.pickupPointName);
-  return `${site ? `${site}<br>` : ''}${point || '—'}`;
-}
-function renderTable(items){
-  const body = $('#ordersBody');
-  if (!items.length) {
-    body.innerHTML = '<tr><td colspan="7" class="muted">Заказов нет</td></tr>';
-    return;
-  }
-  body.innerHTML = items.map(order => `
-    <tr data-id="${escapeHtml(order.id)}" class="${order.id === state.selectedOrderId ? 'isOn' : ''}">
-      <td>${statusBadge(order.status)}<div style="margin-top:10px;font-weight:800">#${escapeHtml(order.id)}</div></td>
-      <td><strong>${escapeHtml(formatDateTime(order.createdAt))}</strong><div class="muted">${escapeHtml(new Date(order.createdAt).toLocaleDateString('ru-RU'))}</div></td>
-      <td><strong>${escapeHtml(order.customer?.name || '—')}</strong><div class="muted">${escapeHtml(order.customer?.phone || '—')}</div></td>
-      <td>${typeLabel(order)}</td>
-      <td><strong>${escapeHtml(order.delivery?.address || '—')}</strong><div class="muted">${escapeHtml(order.comment || 'Без комментария')}</div></td>
-      <td><strong>${orderPointText(order)}</strong></td>
-      <td class="sumCell">${escapeHtml(fmtNum(order.total || 0))}₽</td>
-    </tr>
-  `).join('');
-  $$('#ordersBody tr[data-id]').forEach(row => row.addEventListener('click', () => openOrderModal(row.dataset.id)));
-}
-function openOrderModal(orderId){
-  state.selectedOrderId = orderId;
-  const order = state.orders.find(x => x.id === orderId);
-  renderDetails(order || null);
-  $('#orderModal')?.classList.add('isOn');
-  document.body.classList.add('modalOpen');
-}
-function closeOrderModal(){
-  $('#orderModal')?.classList.remove('isOn');
-  document.body.classList.remove('modalOpen');
-}
-function fieldCard(title, value, muted='', wide=false){
-  if (value === '' || value === null || value === undefined) return '';
-  return `<div class="detailBox${wide ? ' detailBox--wide' : ''}"><strong>${escapeHtml(title)}</strong><div>${escapeHtml(String(value))}</div>${muted ? `<div class="muted">${escapeHtml(String(muted))}</div>` : ''}</div>`;
-}
+function showToast(message){const el=$('#toast');el.textContent=message;el.classList.add('isOn');clearTimeout(showToast._t);showToast._t=setTimeout(()=>el.classList.remove('isOn'),2600)}
+function setConnectionState(text, mode=''){const el=$('#connectState'); if(!el) return; el.textContent=text; el.className=`connectState ${mode}`.trim();}
+function setAuthBusy(isBusy){const btn=$('#saveAuthBtn'); btn.disabled=isBusy; btn.textContent=isBusy?'Проверка...':'Подключиться';}
+async function verifyConnection(token){const res=await fetch(`${API_BASE}/admin/ping`,{headers:{'X-Admin-Token':token}}); const data=await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.error || 'Ошибка API'); if(!data.hasKv) throw new Error('Worker не видит ORDERS_KV'); return data;}
+async function saveAuth(){const token=$('#adminToken').value.trim(); if(!token) return showToast('Введите ADMIN_TOKEN'); setAuthBusy(true); setConnectionState('Проверка подключения...', 'pending'); try{await verifyConnection(token); state.adminToken=token; localStorage.setItem('proz_admin_token',state.adminToken); setConnectionState('Подключено. KV и Worker доступны.', 'success'); showToast('Подключение подтверждено'); await bootstrap();}catch(err){setConnectionState(err.message||'Ошибка подключения', 'error'); showToast(err.message||'Ошибка подключения');}finally{setAuthBusy(false);}}
+async function api(path, options={}){if(!state.adminToken) throw new Error('Сначала введи ADMIN_TOKEN'); const res=await fetch(`${API_BASE}${path}`,{...options,headers:{'Content-Type':'application/json','X-Admin-Token':state.adminToken,...(options.headers||{})}}); const data=await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.error || 'Ошибка API'); return data;}
+function formatMoney(n){return `${Math.round(Number(n||0)).toLocaleString('ru-RU')} ₽`}
+function formatDateTime(iso){const d=new Date(iso); return d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}
+function getOrderDateKey(order){const d=new Date(order.createdAt); const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`}
+function applyClientFilters(items){return items.filter(order=>{ if(state.statusFilter && order.status!==state.statusFilter) return false; if(state.site && order.site!==state.site) return false; if(state.dateMode==='date' && state.dateValue && getOrderDateKey(order)!==state.dateValue) return false; const q=state.search.trim().toLowerCase(); if(q){ const hay=[order.id,order.customer?.name,order.customer?.phone,order.delivery?.address,order.delivery?.restaurant,order.comment,SITE_LABELS[order.site]||order.site].filter(Boolean).join(' ').toLowerCase(); if(!hay.includes(q)) return false; } return true; })}
+async function bootstrap(){await loadOrders(); startAutoRefresh()}
+function startAutoRefresh(){clearInterval(state._timer); if(!state.adminToken) return; state._timer=setInterval(()=>{ if(document.hidden) return; loadOrders(true).catch(()=>{}); }, REFRESH_MS)}
+async function loadOrders(silent=false){const data=await api('/admin/orders?limit=500'); const prev=new Set(state.orders.map(x=>x.id)); state.orders=data.items||[]; render(); if(!silent && prev.size){const fresh=state.orders.filter(x=>!prev.has(x.id)).length; if(fresh>0) showToast(`Новых заказов: ${fresh}`)} }
+function render(){ const items=applyClientFilters(state.orders); renderStats(items); renderTable(items); const selected=items.find(x=>x.id===state.selectedOrderId) || state.orders.find(x=>x.id===state.selectedOrderId) || null; if(selected && $('#orderModal')?.classList.contains('isOn')) renderDetails(selected); }
+function renderStats(items){ const newCount=items.filter(x=>x.status==='new').length; const revenue=items.filter(x=>x.status==='done').reduce((s,x)=>s+Number(x.total||0),0); $('#statNew').textContent=newCount.toLocaleString('ru-RU'); $('#statTotal').textContent=items.length.toLocaleString('ru-RU'); $('#statRevenue').textContent=formatMoney(revenue); }
+function statusBadge(status){ return `<span class="statusBadge status-${status}">${STATUS_LABELS[status]||status}</span>` }
+function typeLabel(order){const when=order.when?.type==='later'?'Предзаказ':'Ближайшее'; const receive=order.delivery?.type==='pickup'?'Самовывоз':'Доставка'; return `${when}<br>${receive}`}
+function renderTable(items){ const body=$('#ordersBody'); if(!items.length){ body.innerHTML='<tr><td colspan="7" class="muted">Заказов нет</td></tr>'; return; } body.innerHTML=items.map(order=>`<tr data-id="${order.id}" class="${order.id===state.selectedOrderId?'isOn':''}"><td>${statusBadge(order.status)}<div style="margin-top:10px;font-weight:800">#${order.id}</div></td><td><strong>${formatDateTime(order.createdAt)}</strong><div class="muted">${new Date(order.createdAt).toLocaleDateString('ru-RU')}</div></td><td><strong>${order.customer?.name||'—'}</strong><div class="muted">${order.customer?.phone||'—'}</div></td><td><strong>${typeLabel(order)}</strong></td><td><strong>${order.delivery?.address||'—'}</strong><div class="muted">${order.comment||'Без комментария'}</div></td><td><strong>${SITE_LABELS[order.site]||order.site||'—'}</strong><div class="muted">${order.delivery?.restaurant||'—'}</div></td><td class="sumCell">${Math.round(Number(order.total||0))}₽</td></tr>`).join('');
+ $$('#ordersBody tr[data-id]').forEach(tr=>tr.addEventListener('click',()=>openOrderModal(tr.dataset.id))) }
+function openOrderModal(orderId){ state.selectedOrderId=orderId; const order=state.orders.find(x=>x.id===orderId); renderTable(applyClientFilters(state.orders)); renderDetails(order||null); $('#orderModal')?.classList.add('isOn'); document.body.classList.add('modalOpen'); }
+function closeOrderModal(){ $('#orderModal')?.classList.remove('isOn'); document.body.classList.remove('modalOpen'); }
 function renderDetails(order){
   const wrap = $('#orderDetails');
-  if (!order) {
+  if(!order){
     wrap.className = 'orderDetails empty';
     wrap.textContent = 'Выбери заказ из таблицы.';
     return;
   }
+
   wrap.className = 'orderDetails';
 
   const statusOptions = Object.entries(STATUS_LABELS)
-    .map(([k,v]) => `<option value="${escapeHtml(k)}" ${order.status===k?'selected':''}>${escapeHtml(v)}</option>`)
+    .map(([k,v]) => `<option value="${k}" ${order.status===k?'selected':''}>${v}</option>`)
     .join('');
 
   const items = (order.items || []).map(it => {
-    const weight = getVal(it.weight, it.variant, it.variantLabel);
-    const label = [it.name, weight ? `(${weight})` : ''].filter(Boolean).join(' ');
-    const lineSum = getVal(it.sum, Number(it.price || 0) * Number(it.qty || 0));
-    return `<li>${escapeHtml(label || 'Позиция')} ×${escapeHtml(String(it.qty || 1))} — ${escapeHtml(fmtNum(lineSum))} ₽</li>`;
+    const weight = it.weight ? ` (${it.weight})` : '';
+    const variant = it.variantLabel ? ` · ${it.variantLabel}` : '';
+    return `<li>${it.name}${weight}${variant} ×${it.qty} — ${it.sum} ₽</li>`;
   }).join('');
 
-  const paymentLabel = getVal(order.paymentLabel, order.payment, order.payment?.methodLabel, order.payment?.method, '—');
+  const paymentLabel = order.paymentLabel || order.payment || '—';
   const receiveLabel = order.delivery?.type === 'pickup' ? 'Самовывоз' : 'Доставка';
-  const whenLabel = order.when?.type === 'later'
-    ? `Предзаказ${order.when?.date ? ` · ${formatDateTime(order.when.date)}` : ''}`
-    : 'Ближайшее время';
-  const customerName = getVal(order.customer?.name, '—');
-  const customerPhone = getVal(order.customer?.phone, '—');
-  const address = getVal(order.delivery?.address, order.address, '—');
-  const restaurantPoint = getVal(order.delivery?.restaurant, order.point, order.branch, order.pointName, order.restaurantPoint, order.pickupPoint, order.delivery?.point, order.delivery?.pickupPointName, order.delivery?.pickupAddress);
-  const deliveryPrice = getVal(order.delivery?.price, order.pricing?.deliveryPrice);
-  const deliveryBasePrice = getVal(order.delivery?.basePrice, order.pricing?.baseDeliveryPrice);
-  const minSurcharge = getVal(order.delivery?.minimumOrderSurcharge, order.pricing?.minimumOrderSurcharge);
-  const zone = getVal(order.delivery?.zone, order.deliveryZone, order.zoneName, order.zone);
-  const entrance = getVal(order.delivery?.entrance);
-  const floor = getVal(order.delivery?.floor);
-  const flat = getVal(order.delivery?.flat);
-  const comment = getVal(order.comment, order.delivery?.comment, order.customerComment);
-  const cutleryCount = getVal(order.cutlery?.count, order.cutleryCount);
-  const cutleryPaidCount = getVal(order.cutlery?.paidCount, order.cutlery?.countPaid, order.paidCutleryCount);
-  const cutleryPrice = getVal(order.cutlery?.price, order.cutleryPrice);
-  const promoCode = getVal(order.promo?.code, order.promoCode);
-  const promoTitle = getVal(order.promo?.title, order.promo?.name, order.promoTitle);
-  const promoDiscount = getVal(order.promo?.discount, order.discount, order.pricing?.discount);
-  const changeFrom = getVal(order.changeFrom, order.payment?.changeFrom);
-  const nightMarkup = getVal(order.pricing?.nightMarkup, order.nightMarkup);
-  const subtotal = getVal(order.subtotal, order.pricing?.subtotal, order.itemsSubtotal);
-  const orderTotal = getVal(order.total, order.pricing?.total, 0);
+  const whenLabel = order.when?.type === 'later' ? 'Предзаказ' : 'Ближайшее время';
+  const customerName = order.customer?.name || '—';
+  const customerPhone = order.customer?.phone || '—';
+  const address = order.delivery?.address || '—';
+  const restaurantPoint = order.delivery?.restaurant || order.point || order.branch || order.pointName || order.restaurantPoint || order.pickupPoint || '—';
+  const deliveryPrice = Number(order.delivery?.price || 0);
+  const deliveryBasePrice = Number(order.delivery?.basePrice || 0);
+  const minSurcharge = Number(order.delivery?.minimumOrderSurcharge || 0);
+  const zone = order.delivery?.zone || order.deliveryZone || '—';
+  const entrance = order.delivery?.entrance || '';
+  const floor = order.delivery?.floor || '';
+  const flat = order.delivery?.flat || '';
+  const comment = order.comment || order.delivery?.comment || '';
+  const cutleryCount = order.cutlery?.count;
+  const cutleryPaidCount = order.cutlery?.paidCount;
+  const cutleryPrice = Number(order.cutlery?.price || 0);
+  const promoCode = order.promo?.code || '';
+  const promoTitle = order.promo?.title || '';
+  const promoDiscount = Number(order.promo?.discount || 0);
+  const changeFrom = order.changeFrom || order.payment?.changeFrom || '';
+  const nightMarkup = Number(order.pricing?.nightMarkup || 0);
+  const subtotal = Number(order.subtotal || order.pricing?.subtotal || 0);
 
-  const cards = [
-    fieldCard('Клиент', customerName, customerPhone),
-    fieldCard('Получение', receiveLabel, `${address}${whenLabel ? ` · ${whenLabel}` : ''}`),
-    fieldCard('Оплата', paymentLabel, `Итого: ${formatMoney(orderTotal)}`),
-    fieldCard('Точка ресторана', restaurantPoint, SITE_LABELS[order.site] || order.site),
-    (deliveryPrice !== '' && deliveryPrice !== undefined && order.delivery?.type !== 'pickup') ? fieldCard('Стоимость доставки', formatMoney(deliveryPrice), [deliveryBasePrice !== '' ? `Базовая: ${formatMoney(deliveryBasePrice)}` : '', minSurcharge !== '' && Number(minSurcharge) > 0 ? `Доплата до минимума: ${formatMoney(minSurcharge)}` : ''].filter(Boolean).join(' · ')) : '',
-    fieldCard('Зона доставки', zone),
-    (entrance || floor || flat) ? fieldCard('Подъезд / этаж / квартира', `${entrance || '—'} / ${floor || '—'} / ${flat || '—'}`) : '',
-    (cutleryCount !== '') ? fieldCard('Приборы', `${cutleryCount || 0} шт.`, `Платных: ${cutleryPaidCount || 0}${cutleryPrice !== '' ? ` · ${formatMoney(cutleryPrice)}` : ''}`) : '',
-    (promoCode || promoTitle || promoDiscount !== '') ? fieldCard('Промокод', promoCode || '—', `${promoTitle || 'Без названия'}${promoDiscount !== '' && Number(promoDiscount) > 0 ? ` · Скидка: ${formatMoney(promoDiscount)}` : ''}`) : '',
-    (changeFrom !== '') ? fieldCard('Сдача', `С ${changeFrom}`) : '',
-    (nightMarkup !== '' && Number(nightMarkup) > 0) ? fieldCard('Ночная наценка', formatMoney(nightMarkup)) : '',
-    (subtotal !== '' && Number(subtotal) > 0) ? fieldCard('Сумма товаров', formatMoney(subtotal)) : '',
-    comment ? fieldCard('Комментарий клиента', comment, '', true) : ''
+  const extraRows = [
+    restaurantPoint && restaurantPoint !== '—' ? `<div class="detailBox"><strong>Точка ресторана</strong><div>${restaurantPoint}</div><div class="muted">${SITE_LABELS[order.site]||order.site||'—'}</div></div>` : '',
+    order.delivery?.type !== 'pickup' ? `<div class="detailBox"><strong>Доставка</strong><div>${formatMoney(deliveryPrice)}</div><div class="muted">Базовая: ${formatMoney(deliveryBasePrice)}${minSurcharge ? ` · Доплата до минимума: ${formatMoney(minSurcharge)}` : ''}</div></div>` : '',
+    zone && zone !== '—' ? `<div class="detailBox"><strong>Зона доставки</strong><div>${zone}</div></div>` : '',
+    (entrance || floor || flat) ? `<div class="detailBox"><strong>Подъезд / этаж / квартира</strong><div>${entrance || '—'} / ${floor || '—'} / ${flat || '—'}</div></div>` : '',
+    typeof cutleryCount !== 'undefined' ? `<div class="detailBox"><strong>Приборы</strong><div>${cutleryCount || 0} шт.</div><div class="muted">Платных: ${cutleryPaidCount || 0} · ${formatMoney(cutleryPrice)}</div></div>` : '',
+    promoCode || promoTitle || promoDiscount ? `<div class="detailBox"><strong>Промокод</strong><div>${promoCode || '—'}</div><div class="muted">${promoTitle || 'Без названия'}${promoDiscount ? ` · Скидка: ${formatMoney(promoDiscount)}` : ''}</div></div>` : '',
+    changeFrom ? `<div class="detailBox"><strong>Сдача</strong><div>С ${changeFrom}</div></div>` : '',
+    nightMarkup ? `<div class="detailBox"><strong>Ночная наценка</strong><div>${formatMoney(nightMarkup)}</div></div>` : '',
+    subtotal ? `<div class="detailBox"><strong>Сумма товаров</strong><div>${formatMoney(subtotal)}</div></div>` : '',
+    comment ? `<div class="detailBox detailBox--wide"><strong>Комментарий клиента</strong><div>${comment}</div></div>` : ''
   ].filter(Boolean).join('');
 
   wrap.innerHTML = `
     <div class="detailCard">
       <div class="detailTop">
         <div>
-          <h3 style="margin:0">Заказ #${escapeHtml(order.id)}</h3>
-          <div class="muted">${escapeHtml(formatDateTime(order.createdAt))} · ${escapeHtml(SITE_LABELS[order.site] || order.site || '—')}</div>
+          <h3 style="margin:0">Заказ #${order.id}</h3>
+          <div class="muted">${formatDateTime(order.createdAt)} · ${SITE_LABELS[order.site]||order.site||'—'}</div>
         </div>
         <div class="statusRow">
           <select class="statusSelect" id="statusSelect">${statusOptions}</select>
           <button class="primaryBtn" id="saveStatusBtn">Сохранить статус</button>
         </div>
       </div>
-      <div class="detailGrid">${cards}</div>
+
+      <div class="detailGrid">
+        <div class="detailBox"><strong>Клиент</strong><div>${customerName}</div><div class="muted">${customerPhone}</div></div>
+        <div class="detailBox"><strong>Получение</strong><div>${receiveLabel}</div><div class="muted">${address}</div><div class="muted">${whenLabel}</div></div>
+        <div class="detailBox"><strong>Оплата</strong><div>${paymentLabel}</div><div class="muted">Итого: ${formatMoney(order.total)}</div></div>
+        ${extraRows}
+      </div>
+
       <div class="itemsBox"><strong>Состав заказа</strong><ul>${items || '<li>—</li>'}</ul></div>
     </div>`;
 
-  $('#saveStatusBtn').addEventListener('click', async() => {
+  $('#saveStatusBtn').addEventListener('click', async()=>{
     const status = $('#statusSelect').value;
-    await api(`/admin/orders/${encodeURIComponent(order.id)}/status`, { method:'POST', body: JSON.stringify({ status }) });
+    await api(`/admin/orders/${encodeURIComponent(order.id)}/status`, { method:'POST', body: JSON.stringify({status}) });
     showToast('Статус обновлён');
     await loadOrders(true);
-    const refreshed = state.orders.find(x => x.id === order.id);
-    if (refreshed) renderDetails(refreshed);
+    const refreshed = state.orders.find(x=>x.id===order.id);
+    if(refreshed) renderDetails(refreshed);
   });
 }
-function bindEvents(){
-  $('#adminToken').value = state.adminToken;
-  $('#saveAuthBtn').addEventListener('click', saveAuth);
-  $('#applyFiltersBtn').addEventListener('click', () => { syncFilters(); render(); });
-  $('#refreshBtn').addEventListener('click', () => { syncFilters(); loadOrders().catch(err => showToast(err.message)); });
-  $('#searchInput').addEventListener('input', () => { syncFilters(); render(); });
-  $('#siteFilter').addEventListener('change', () => { syncFilters(); render(); });
-  $('#dateMode').addEventListener('change', () => {
-    syncFilters();
-    $('#dateInput').disabled = $('#dateMode').value !== 'date';
-    render();
-  });
-  $('#dateInput').addEventListener('change', () => { syncFilters(); render(); });
-  $$('#statusChips .chip').forEach(btn => btn.addEventListener('click', () => {
-    $$('#statusChips .chip').forEach(x => x.classList.remove('isOn'));
-    btn.classList.add('isOn');
-    state.statusFilter = btn.dataset.status || '';
-    render();
-  }));
-  $('#orderModalBackdrop')?.addEventListener('click', closeOrderModal);
-  $('#orderModalClose')?.addEventListener('click', closeOrderModal);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOrderModal(); });
-}
-function syncFilters(){
-  state.search = $('#searchInput').value || '';
-  state.site = $('#siteFilter').value || '';
-  state.dateMode = $('#dateMode').value || 'all';
-  state.dateValue = $('#dateInput').value || '';
-}
-(function init(){
-  bindEvents();
-  if (state.adminToken) {
-    setConnectionState('Проверка сохранённого токена...', 'pending');
-    verifyConnection(state.adminToken)
-      .then(async() => {
-        setConnectionState('Подключено. KV и Worker доступны.', 'success');
-        await requestNotificationPermission();
-        return bootstrap();
-      })
-      .catch(err => {
-        setConnectionState(err.message || 'Ошибка подключения', 'error');
-        showToast(err.message || 'Ошибка подключения');
-      });
-  } else {
-    setConnectionState('Введите ADMIN_TOKEN для загрузки заказов', '');
-  }
-})();
+function bindEvents(){ $('#adminToken').value=state.adminToken; $('#saveAuthBtn').addEventListener('click',saveAuth); $('#applyFiltersBtn').addEventListener('click',()=>{syncFilters(); render();}); $('#refreshBtn').addEventListener('click',()=>{syncFilters(); loadOrders().catch(err=>showToast(err.message));}); $('#searchInput').addEventListener('input',()=>{syncFilters(); render();}); $('#siteFilter').addEventListener('change',()=>{syncFilters(); render();}); $('#dateMode').addEventListener('change',()=>{syncFilters(); $('#dateInput').disabled = $('#dateMode').value !== 'date'; render();}); $('#dateInput').addEventListener('change',()=>{syncFilters(); render();}); $$('#statusChips .chip').forEach(btn=>btn.addEventListener('click',()=>{ $$('#statusChips .chip').forEach(x=>x.classList.remove('isOn')); btn.classList.add('isOn'); state.statusFilter=btn.dataset.status||''; render();})); $('#orderModalBackdrop')?.addEventListener('click', closeOrderModal); $('#orderModalClose')?.addEventListener('click', closeOrderModal); document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeOrderModal(); }); }
+function syncFilters(){ state.search=$('#searchInput').value||''; state.site=$('#siteFilter').value||''; state.dateMode=$('#dateMode').value||'all'; state.dateValue=$('#dateInput').value||''; }
+(function init(){ bindEvents(); if(state.adminToken){ setConnectionState('Проверка сохранённого токена...', 'pending'); verifyConnection(state.adminToken).then(()=>{ setConnectionState('Подключено. KV и Worker доступны.', 'success'); return bootstrap(); }).catch(err=>{ setConnectionState(err.message||'Ошибка подключения', 'error'); showToast(err.message||'Ошибка подключения'); }); } else { setConnectionState('Введите ADMIN_TOKEN для загрузки заказов', ''); } })();
