@@ -1,6 +1,6 @@
 
 const API_BASE = "https://api.полихов.рф";
-const REFRESH_MS = 10000;
+const REFRESH_MS = 3000;
 const STATUS_LABELS = {
   new: 'Новый',
   confirmed: 'Подтверждён',
