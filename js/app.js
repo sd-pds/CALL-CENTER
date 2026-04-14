@@ -47,8 +47,21 @@ function setConnectionState(text, mode=''){
 }
 function setAuthBusy(isBusy){
   const btn = $('#saveAuthBtn');
+  if (!btn) return;
   btn.disabled = isBusy;
-  btn.textContent = isBusy ? 'Проверка...' : 'Подключиться';
+  btn.textContent = isBusy ? 'Проверка...' : 'Войти';
+}
+function updateAuthView(isAuthed){
+  const gate = $('#loginGate');
+  const app = $('#appRoot');
+  if (!gate || !app) return;
+  if (isAuthed){
+    gate.hidden = true;
+    app.hidden = false;
+  } else {
+    gate.hidden = false;
+    app.hidden = true;
+  }
 }
 function escapeHtml(v){
   return String(v ?? '').replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -104,6 +117,7 @@ async function saveAuth(){
     await bootstrap();
     showToast('Подключение установлено');
   } catch (err){
+    updateAuthView(false);
     setConnectionState(err.message || 'Ошибка подключения', 'error');
     showToast(err.message || 'Ошибка подключения');
   } finally {
@@ -150,6 +164,7 @@ function applyClientFilters(items){
 async function bootstrap(){
   await loadOrders();
   startAutoRefresh();
+  updateAuthView(true);
 }
 function startAutoRefresh(){
   clearInterval(state._timer);
@@ -392,6 +407,9 @@ function renderDetails(order){
 function bindEvents(){
   $('#adminToken').value = state.adminToken;
   $('#saveAuthBtn').addEventListener('click', saveAuth);
+  $('#adminToken').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveAuth();
+  });
   $('#applyFiltersBtn').addEventListener('click', () => { syncFilters(); render(); });
   $('#refreshBtn').addEventListener('click', () => { syncFilters(); loadOrders().catch(err => showToast(err.message)); });
   $('#searchInput').addEventListener('input', () => { syncFilters(); render(); });
@@ -420,6 +438,7 @@ function syncFilters(){
 }
 (function init(){
   bindEvents();
+  updateAuthView(false);
   if (state.adminToken) {
     setConnectionState('Проверка сохранённого пароля...', 'pending');
     verifyConnection(state.adminToken)
@@ -429,6 +448,7 @@ function syncFilters(){
         return bootstrap();
       })
       .catch(err => {
+        updateAuthView(false);
         setConnectionState(err.message || 'Ошибка подключения', 'error');
         showToast(err.message || 'Ошибка подключения');
       });
