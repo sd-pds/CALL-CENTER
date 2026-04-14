@@ -232,8 +232,7 @@ input:focus,select:focus{
 }
 
 .ordersScroll{
-  max-height:calc(100vh - 265px);
-  overflow:auto;
+  overflow:visible;
   border-radius:18px;
   border:1px solid rgba(92,32,27,.08);
   background:#fff;
@@ -398,4 +397,40 @@ body:not(.isAuthed) .appRoot{
 }
 body:not(.isAuthed) .loginGate{
   display:grid !important;
+}
+
+
+/* Fix: orders list should grow naturally down the page */
+.ordersScroll{
+  max-height:none !important;
+  height:auto !important;
+  overflow:visible !important;
+}
+.ordersPanel{
+  overflow:visible;
+}
+.ordersTable{
+  min-width:1100px;
+}
+
+/* Fix: modal close button should not overlap status controls */
+.orderModal__dialog{
+  padding-top:64px !important;
+}
+.orderModal__close{
+  top:16px !important;
+  right:16px !important;
+  z-index:3;
+}
+.statusRow{
+  padding-right:64px;
+}
+@media (max-width:780px){
+  .orderModal__dialog{
+    padding-top:60px !important;
+  }
+  .statusRow{
+    padding-right:0;
+    padding-top:8px;
+  }
 }
