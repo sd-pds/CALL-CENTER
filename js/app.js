@@ -471,6 +471,6 @@ function syncFilters(){
         showToast(err.message || 'Ошибка подключения');
       });
   } else {
-    setConnectionState('Введите пароль для загрузки заказов', '');
+    setConnectionState('Доступ заблокирован', '');
   }
 })();
