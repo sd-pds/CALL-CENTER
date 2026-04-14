@@ -54,13 +54,18 @@ function setAuthBusy(isBusy){
 function updateAuthView(isAuthed){
   const gate = $('#loginGate');
   const app = $('#appRoot');
+  document.body.classList.toggle('isAuthed', !!isAuthed);
   if (!gate || !app) return;
   if (isAuthed){
     gate.hidden = true;
+    gate.setAttribute('aria-hidden', 'true');
     app.hidden = false;
+    app.setAttribute('aria-hidden', 'false');
   } else {
     gate.hidden = false;
+    gate.setAttribute('aria-hidden', 'false');
     app.hidden = true;
+    app.setAttribute('aria-hidden', 'true');
   }
 }
 function escapeHtml(v){
@@ -113,6 +118,7 @@ async function saveAuth(){
     state.adminToken = token;
     localStorage.setItem('proz_admin_token', token);
     setConnectionState('Подключение установлено.', 'success');
+    updateAuthView(true);
     await requestNotificationPermission();
     await bootstrap();
     showToast('Подключение установлено');
@@ -171,15 +177,27 @@ function startAutoRefresh(){
   if (!state.adminToken) return;
   state._timer = setInterval(() => {
     if (document.hidden) return;
+    if ($('#orderModal')?.classList.contains('isOn')) return;
+    if (document.activeElement && document.activeElement.id === 'statusSelect') return;
     loadOrders(true).catch(() => {});
   }, REFRESH_MS);
 }
 async function loadOrders(silent=false){
   const data = await api('/admin/orders?limit=500');
   const prevIds = new Set(state.orders.map(x => x.id));
+  const selectedId = state.selectedOrderId;
+  const modalOpen = $('#orderModal')?.classList.contains('isOn');
+  const statusFocused = document.activeElement && document.activeElement.id === 'statusSelect';
+
   state.orders = data.items || [];
   handleOrderAlerts(state.orders, prevIds, silent);
   render();
+
+  if (modalOpen && selectedId && !statusFocused) {
+    const refreshed = state.orders.find(x => x.id === selectedId);
+    if (refreshed) renderDetails(refreshed);
+  }
+
   if (!silent && prevIds.size) {
     const fresh = state.orders.filter(x => !prevIds.has(x.id)).length;
     if (fresh > 0) showToast(`Новых заказов: ${fresh}`);

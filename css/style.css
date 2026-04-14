@@ -385,3 +385,17 @@ select.statusSelect{
     padding:18px;
   }
 }
+
+
+body.isAuthed .loginGate{
+  display:none !important;
+}
+body.isAuthed .appRoot{
+  display:grid !important;
+}
+body:not(.isAuthed) .appRoot{
+  display:none !important;
+}
+body:not(.isAuthed) .loginGate{
+  display:grid !important;
+}
